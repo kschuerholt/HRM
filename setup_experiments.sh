@@ -14,6 +14,26 @@ if [ ! -f "pretrain.py" ]; then
     exit 1
 fi
 
+# Install system dependencies needed for PyTorch compilation optimizations
+echo "🔧 Installing system dependencies..."
+if command -v apt-get &> /dev/null; then
+    # Check if we can run sudo commands
+    if sudo -n true 2>/dev/null; then
+        echo "Installing Python development headers and build tools..."
+        sudo apt-get update -qq
+        sudo apt-get install -y python3-dev python3.12-dev build-essential
+        echo "✅ System dependencies installed"
+    else
+        echo "⚠️  Note: Cannot install system dependencies (no sudo access)"
+        echo "   If you encounter compilation errors, manually run:"
+        echo "   sudo apt-get install python3-dev python3.12-dev build-essential"
+    fi
+else
+    echo "⚠️  Non-Debian system detected. You may need to install:"
+    echo "   - Python development headers (Python.h)"
+    echo "   - Build tools (gcc, make)"
+fi
+
 # Check for GPUs
 echo "🔍 Checking GPU availability..."
 if ! command -v nvidia-smi &> /dev/null; then
