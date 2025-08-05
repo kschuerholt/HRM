@@ -87,6 +87,57 @@ class ACTLossHead(nn.Module):
                 ).sum(),
                 "steps": torch.where(valid_metrics, new_carry.steps, 0).sum(),
             }
+            
+            # Enhanced H/L Module Metrics
+            if hasattr(self.model, '_hrm_metrics'):
+                hrm_metrics = self.model._hrm_metrics
+                
+                # H residual norms (simple scalar aggregation)
+                if hrm_metrics.get('h_residual_norms'):
+                    h_residuals = hrm_metrics['h_residual_norms']  # List of floats
+                    if h_residuals:
+                        metrics.update({
+                            "h_residual_mean": torch.tensor(sum(h_residuals) / len(h_residuals), device='cuda'),
+                            "h_residual_max": torch.tensor(max(h_residuals), device='cuda'),
+                            "h_residual_min": torch.tensor(min(h_residuals), device='cuda'),
+                        })
+                        
+                        # Track residual evolution over H cycles
+                        for i, residual in enumerate(h_residuals):
+                            metrics[f"h_residual_cycle_{i}"] = torch.tensor(residual, device='cuda')
+                
+                # L residual norms (simple scalar aggregation)
+                if hrm_metrics.get('l_residual_norms'):
+                    l_residuals = hrm_metrics['l_residual_norms']  # List of floats
+                    if l_residuals:
+                        metrics.update({
+                            "l_residual_mean": torch.tensor(sum(l_residuals) / len(l_residuals), device='cuda'),
+                            "l_residual_max": torch.tensor(max(l_residuals), device='cuda'),
+                            "l_residual_min": torch.tensor(min(l_residuals), device='cuda'),
+                        })
+                        
+                        # Track residual evolution over L cycles  
+                        for i, residual in enumerate(l_residuals):
+                            metrics[f"l_residual_cycle_{i}"] = torch.tensor(residual, device='cuda')
+                
+                # Activation norms (simple scalar aggregation)
+                if hrm_metrics.get('h_activation_norms'):
+                    h_activations = hrm_metrics['h_activation_norms']  # List of floats
+                    if h_activations:
+                        metrics["h_activation_mean"] = torch.tensor(sum(h_activations) / len(h_activations), device='cuda')
+                        
+                if hrm_metrics.get('l_activation_norms'):
+                    l_activations = hrm_metrics['l_activation_norms']  # List of floats
+                    if l_activations:
+                        metrics["l_activation_mean"] = torch.tensor(sum(l_activations) / len(l_activations), device='cuda')
+                
+                # Cycle execution counts (simple integers)
+                h_cycles = hrm_metrics.get('h_cycles_executed', 0)
+                l_cycles = hrm_metrics.get('l_cycles_executed', 0)
+                metrics.update({
+                    "h_cycles_executed": torch.tensor(float(h_cycles), device='cuda', dtype=torch.float32),
+                    "l_cycles_executed": torch.tensor(float(l_cycles), device='cuda', dtype=torch.float32),
+                })
 
         # Losses
         # FIXME: Assuming the batch is always full
@@ -95,10 +146,13 @@ class ACTLossHead(nn.Module):
             outputs["q_halt_logits"], seq_is_correct.to(outputs["q_halt_logits"].dtype), reduction="sum"
         )
 
+        # Loss component tracking with weights (clean approach)
         metrics.update(
             {
                 "lm_loss": lm_loss.detach(),
                 "q_halt_loss": q_halt_loss.detach(),
+                "lm_loss_weight": torch.tensor(1.0, device='cuda', dtype=torch.float32),
+                "q_halt_loss_weight": torch.tensor(0.5, device='cuda', dtype=torch.float32),
             }
         )
 
@@ -110,6 +164,7 @@ class ACTLossHead(nn.Module):
             )
 
             metrics["q_continue_loss"] = q_continue_loss.detach()
+            metrics["q_continue_loss_weight"] = torch.tensor(0.5, device='cuda', dtype=torch.float32)
 
         # Filter outputs for return
         detached_outputs = {k: outputs[k].detach() for k in return_keys if k in outputs}

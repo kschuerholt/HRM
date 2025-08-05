@@ -225,11 +225,32 @@ def train_batch(config: PretrainConfig, train_state: TrainState, batch: Any, glo
 
     ((1 / global_batch_size) * loss).backward()
 
-    # Allreduce
+    # Allreduce gradients first (get final gradients that will actually be applied)
     if world_size > 1:
         for param in train_state.model.parameters():
             if param.grad is not None:
                 dist.all_reduce(param.grad)
+    
+    # Compute gradient norms AFTER allreduce (measures final effective gradients)
+    h_grad_norm_sq = 0.0
+    l_grad_norm_sq = 0.0
+    total_grad_norm_sq = 0.0
+    
+    for name, param in train_state.model.named_parameters():
+        if param.grad is not None:
+            param_norm_sq = (param.grad.data.norm(2) ** 2).detach().cpu().item()
+            total_grad_norm_sq += param_norm_sq
+            
+            # Check if parameter belongs to H or L level
+            if 'H_level' in name:
+                h_grad_norm_sq += param_norm_sq
+            elif 'L_level' in name:
+                l_grad_norm_sq += param_norm_sq
+    
+    # Add gradient norms to metrics (final gradients that drive optimization)
+    metrics['h_grad_norm'] = torch.tensor(h_grad_norm_sq ** 0.5, device='cuda')
+    metrics['l_grad_norm'] = torch.tensor(l_grad_norm_sq ** 0.5, device='cuda')
+    metrics['total_grad_norm'] = torch.tensor(total_grad_norm_sq ** 0.5, device='cuda')
             
     # Apply optimizer
     lr_this_step = None    

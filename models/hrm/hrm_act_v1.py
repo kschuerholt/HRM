@@ -249,7 +249,7 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
         self, carry: HierarchicalReasoningModel_ACTV1InnerCarry, batch: Dict[str, torch.Tensor]
     ) -> Tuple[HierarchicalReasoningModel_ACTV1InnerCarry, torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """
-        Takes a 'carry' and a a batch of inputs as a dict. Retursn a carry, a logits tensor, and a tuple of q_logits.
+        Takes a 'carry' and a a batch of inputs as a dict. Returns a carry, a logits tensor, and a tuple of q_logits.
         Args:
             carry: The carry from the previous step.
             batch: A dictionary containing the `inputs` and `puzzle_identifiers`.
@@ -263,27 +263,76 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
         # Input encoding - # compute embeddings
         input_embeddings = self._input_embeddings(batch["inputs"], batch["puzzle_identifiers"])
 
+        # Initialize metrics tracking (only during training to avoid eval performance impact)
+        track_metrics = self.training
+        h_residual_norms = []
+        l_residual_norms = []
+        h_activation_norms = []
+        l_activation_norms = []
+
         # Forward iterations
         # NOTE: gradient-free forward passes through H-level and L-level to update z_H and z_L.
         with torch.no_grad():
             z_H, z_L = carry.z_H, carry.z_L
+            
+            # Track initial activation norms (only during training) 
+            if track_metrics:
+                h_activation_norms.append(torch.norm(z_H, dim=-1).mean().detach().cpu().item())
+                l_activation_norms.append(torch.norm(z_L, dim=-1).mean().detach().cpu().item())
 
             for _H_step in range(self.config.H_cycles):
                 for _L_step in range(self.config.L_cycles):
                     if not ((_H_step == self.config.H_cycles - 1) and (_L_step == self.config.L_cycles - 1)):
                         ## NOTE: - z_H + input_embeddings are the 'injection' to the z_L, z_L is the input to z_L
+                        z_L_prev = z_L
                         z_L = self.L_level(z_L, z_H + input_embeddings, **seq_info)
+                        
+                        # Track L-level residual norm (only during training)
+                        if track_metrics:
+                            l_residual_norms.append(torch.norm(z_L - z_L_prev, dim=-1).mean().detach().cpu().item())
+                            l_activation_norms.append(torch.norm(z_L, dim=-1).mean().detach().cpu().item())
 
                 if not (_H_step == self.config.H_cycles - 1):
                     ## NOTE: - z_L is the injection to the H_Level, z_H is the input to the H_Level
+                    z_H_prev = z_H
                     z_H = self.H_level(z_H, z_L, **seq_info)
+                    
+                    # Track H-level residual norm (only during training)
+                    if track_metrics:
+                        h_residual_norms.append(torch.norm(z_H - z_H_prev, dim=-1).mean().detach().cpu().item())
+                        h_activation_norms.append(torch.norm(z_H, dim=-1).mean().detach().cpu().item())
 
         assert not z_H.requires_grad and not z_L.requires_grad
 
         # 1-step grad
-        ## NOTE: One further step of z_L and z_H throught the H_Level and L_Level, this time with gradients.
-        z_L = self.L_level(z_L, z_H + input_embeddings, **seq_info)
+        ## NOTE: One further step of z_L and z_H through the H_Level and L_Level, this time with gradients.
+        z_L_prev_grad = z_L
+        z_L = self.L_level(z_L, z_H + input_embeddings, **seq_info) 
+        
+        z_H_prev_grad = z_H
         z_H = self.H_level(z_H, z_L, **seq_info)
+        
+        # Track final gradient step residuals (only during training)  
+        if track_metrics:
+            l_residual_norms.append(torch.norm(z_L - z_L_prev_grad, dim=-1).mean().detach().cpu().item())
+            h_residual_norms.append(torch.norm(z_H - z_H_prev_grad, dim=-1).mean().detach().cpu().item())
+            
+            # Store metrics in a global dict for the loss head to access
+            if not hasattr(self, '_hrm_metrics'):
+                self._hrm_metrics = {}
+            
+            self._hrm_metrics.update({
+                'h_residual_norms': h_residual_norms,
+                'l_residual_norms': l_residual_norms, 
+                'h_activation_norms': h_activation_norms,
+                'l_activation_norms': l_activation_norms,
+                'h_cycles_executed': len(h_residual_norms),
+                'l_cycles_executed': len(l_residual_norms),
+            })
+        else:
+            # Clear metrics during eval to avoid stale data
+            if hasattr(self, '_hrm_metrics'):
+                self._hrm_metrics = {}
 
         # LM Outputs
         # the carry is updated, but detached
