@@ -37,6 +37,8 @@ echo "📦 Installing dependencies..."
 pip install --upgrade pip
 pip install -e .
 
+# Note: We use standard AdamW optimizer instead of adam-atan2 for better compatibility
+
 # Verify PyTorch CUDA
 echo "🔧 Verifying PyTorch CUDA support..."
 python3 -c "

@@ -5,7 +5,7 @@ description = "Hierarchical Reasoning Model"
 requires-python = ">=3.8.10"
 dependencies = [
     "torch>=2.0.0",
-    "adam-atan2>=0.0.3",
+    # "adam-atan2>=0.0.3",  # Replaced with standard AdamW optimizer
     "einops>=0.6.0",
     "tqdm>=4.65.0",
     "coolname>=2.2.0",
