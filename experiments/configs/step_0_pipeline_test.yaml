@@ -23,8 +23,8 @@ puzzle_emb_weight_decay: 1.0
 # Training duration - very short
 epochs: 100               # Just 100 epochs instead of 20000+
 steps_per_epoch: 10       # Only 10 steps per epoch
-eval_every_n_epochs: 20   # Evaluate every 20 epochs
-save_every_n_epochs: 50   # Save checkpoints every 50 epochs
+eval_interval: 20         # Evaluate every 20 epochs
+checkpoint_every_eval: true  # Save checkpoints at each eval
 
 # Data
 data_path: data/arc-test-minimal   # Will create a minimal dataset
