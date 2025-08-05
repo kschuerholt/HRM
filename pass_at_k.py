@@ -38,8 +38,8 @@ def crop_arc_grid(grid: np.ndarray, grid_size: int = 30) -> np.ndarray:
     Returns:
         Cropped grid with token IDs converted to color values
     """
-    if len(grid.shape) == 1:
-        grid = grid.reshape(grid_size, grid_size)
+    # Always reshape to ensure consistent typing for numba
+    grid = grid.reshape(grid_size, grid_size)
 
     # Find maximum-sized rectangle without any EOS token inside
     max_area = 0
