@@ -500,8 +500,10 @@ def launch(hydra_config: DictConfig):
             )
 
             if RANK == 0 and metrics is not None:
+                # Remove train/step from metrics if it exists and use it for logging
+                global_step = metrics.pop("train/step", train_state.step)
                 metrics["epoch"] = current_epoch
-                wandb.log(metrics, step=train_state.step)
+                wandb.log(metrics, step=global_step)
                 progress_bar.update(train_state.step - progress_bar.n)  # type: ignore
 
         ############ Evaluation
@@ -515,7 +517,7 @@ def launch(hydra_config: DictConfig):
                     flattened_metrics[f"eval/{set_name}_{metric_name}"] = value
             flattened_metrics["epoch"] = current_epoch
             print(f"[Rank {RANK}, World Size {WORLD_SIZE}]: Logging metrics: {flattened_metrics}")
-            wandb.log(flattened_metrics, step=train_state.step)
+            wandb.log(flattened_metrics, step=global_step)
 
         ############ Checkpointing
         if RANK == 0 and (config.checkpoint_every_eval or (_iter_id == total_iters - 1)):
