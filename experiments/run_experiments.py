@@ -157,14 +157,14 @@ class HRMExperimentRunner:
                     f"--nproc_per_node={num_gpus}",
                     "--standalone",
                     "pretrain.py",
-                    f"--config-path={self.output_dir.absolute()}",
+                    f"--config-path={self.experiments_dir / 'configs'}",
                     f"--config-name={config_path.stem}"
                 ]
             else:
                 # Single GPU training
                 cmd = [
                     "python", "pretrain.py",
-                    f"--config-path={self.output_dir.absolute()}",
+                    f"--config-path={self.experiments_dir / 'configs'}",
                     f"--config-name={config_path.stem}"
                 ]
             
