@@ -10,7 +10,6 @@ import json
 from typing import Dict, List
 import numpy as np
 import torch
-from numba import njit
 
 try:
     from dataset.common import inverse_dihedral_transform
@@ -25,7 +24,6 @@ except ImportError:
 PAD_PUZZLE_IDENTIFIER = 0
 
 
-@njit
 def crop_arc_grid(grid: np.ndarray, grid_size: int = 30) -> np.ndarray:
     """
     Crop ARC grid to remove padding and EOS tokens.
@@ -38,7 +36,7 @@ def crop_arc_grid(grid: np.ndarray, grid_size: int = 30) -> np.ndarray:
     Returns:
         Cropped grid with token IDs converted to color values
     """
-    # Always reshape to ensure consistent typing for numba
+    # Always reshape to ensure consistent array shape
     grid = grid.reshape(grid_size, grid_size)
 
     # Find maximum-sized rectangle without any EOS token inside
