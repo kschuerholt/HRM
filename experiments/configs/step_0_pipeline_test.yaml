@@ -27,7 +27,7 @@ eval_interval: 2          # Evaluate every 2 epochs (very frequent)
 checkpoint_every_eval: true  # Save checkpoints at each eval
 
 # Data
-data_path: data/arc_agi_1           # Use existing minimal dataset
+data_path: data/arc-test-minimal           # Use existing minimal dataset
 max_seq_len: 900          # Standard sequence length
 
 # Optimizer
