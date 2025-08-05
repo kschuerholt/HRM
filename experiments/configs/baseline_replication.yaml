@@ -12,7 +12,7 @@ data_path: data/arc-aug-1000
 global_batch_size: 768
 epochs: 20000  # Standardized across all experiments
 steps_per_epoch: 100    # Required field
-eval_interval: 5       # Every 200 epochs
+eval_interval: 200       # Every 200 epochs
 checkpoint_every_eval: false  # Only save final checkpoint
 
 # Learning rates (from paper)
