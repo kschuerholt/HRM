@@ -20,14 +20,14 @@ beta2: 0.95
 puzzle_emb_lr: 1e-2       # Keep separate LR for puzzle embeddings
 puzzle_emb_weight_decay: 1.0
 
-# Training duration - very short
-epochs: 100               # Just 100 epochs instead of 20000+
-steps_per_epoch: 10       # Only 10 steps per epoch
-eval_interval: 20         # Evaluate every 20 epochs
+# Training duration - very short for fast testing
+epochs: 10                # Just 10 epochs for super fast testing
+steps_per_epoch: 5        # Only 5 steps per epoch
+eval_interval: 2          # Evaluate every 2 epochs (very frequent)
 checkpoint_every_eval: true  # Save checkpoints at each eval
 
 # Data
-data_path: data/arc-test-minimal   # Will create a minimal dataset
+data_path: data/arc_agi_1           # Use existing minimal dataset
 max_seq_len: 900          # Standard sequence length
 
 # Optimizer
@@ -40,7 +40,7 @@ optim:
 scheduler:
   name: transformers.get_cosine_schedule_with_warmup
   num_warmup_steps: 10    # Very short warmup
-  num_training_steps: 1000  # Total steps = epochs * steps_per_epoch
+  num_training_steps: 50    # Total steps = 10 epochs * 5 steps_per_epoch
 
 # Logging and monitoring
 run_name: step_0_pipeline_test
