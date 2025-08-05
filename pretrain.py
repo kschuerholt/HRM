@@ -21,6 +21,7 @@ from omegaconf import DictConfig
 from puzzle_dataset import PuzzleDataset, PuzzleDatasetConfig, PuzzleDatasetMetadata
 from utils.functions import load_model_class, get_model_source_path
 from models.sparse_embedding import CastedSparseEmbeddingSignSGD_Distributed
+from pass_at_k import evaluate_pass_at_k
 
 
 class LossConfig(pydantic.BaseModel):
@@ -68,6 +69,10 @@ class PretrainConfig(pydantic.BaseModel):
     checkpoint_every_eval: bool = False
     eval_interval: Optional[int] = None
     eval_save_outputs: List[str] = []
+
+    # Pass@k evaluation
+    compute_pass_at_k: bool = True
+    pass_at_k_values: List[int] = [1, 2, 10]
 
 
 @dataclass
@@ -508,7 +513,22 @@ def launch(hydra_config: DictConfig):
 
         ############ Evaluation
         train_state.model.eval()
+
+        # Regular evaluation metrics
         metrics = evaluate(config, train_state, eval_loader, eval_metadata, rank=RANK, world_size=WORLD_SIZE)
+
+        # Pass@k evaluation (separate forward pass)
+        pass_at_k_results = {}
+        if config.compute_pass_at_k:
+            pass_at_k_results = evaluate_pass_at_k(
+                train_state.model,
+                eval_loader,
+                config.data_path,
+                config.pass_at_k_values,
+                rank=RANK,
+                world_size=WORLD_SIZE,
+            )
+
         if RANK == 0 and metrics is not None:
             # Flatten evaluation metrics and add eval/ prefix
             flattened_metrics = {}
@@ -516,6 +536,11 @@ def launch(hydra_config: DictConfig):
                 for metric_name, value in set_metrics.items():
                     flattened_metrics[f"eval/{set_name}_{metric_name}"] = value
             flattened_metrics["epoch"] = current_epoch
+
+            # Add pass@k metrics with proper prefix
+            for k, v in pass_at_k_results.items():
+                flattened_metrics[f"eval_pass_k/{k}"] = v
+
             print(f"[Rank {RANK}, World Size {WORLD_SIZE}]: Logging metrics: {flattened_metrics}")
             wandb.log(flattened_metrics, step=global_step)
 
