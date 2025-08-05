@@ -78,10 +78,10 @@ sys.path.append(str(HRM_ROOT))
 class HRMExperimentRunner:
     """Runner that uses HRM's existing training infrastructure."""
     
-    def __init__(self, output_dir: str = "experiment_results"):
+    def __init__(self, output_dir: str = "experiments/results"):
         self.hrm_root = HRM_ROOT
-        self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(exist_ok=True)
+        self.output_dir = self.hrm_root / output_dir  # Make it absolute path
+        self.output_dir.mkdir(parents=True, exist_ok=True)  # parents=True for nested directory
         self.experiments_dir = self.hrm_root / "experiments"
         
         print(f"HRM Root: {self.hrm_root}")
