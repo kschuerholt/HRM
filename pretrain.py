@@ -507,7 +507,12 @@ def launch(hydra_config: DictConfig):
         metrics = evaluate(config, train_state, eval_loader, eval_metadata, rank=RANK, world_size=WORLD_SIZE)
         if RANK == 0 and metrics is not None:
             print(f"[Rank {RANK}, World Size {WORLD_SIZE}]: Logging metrics: {metrics}")
-            wandb.log(metrics, step=train_state.step)
+            # Flatten evaluation metrics and add eval/ prefix
+            flattened_metrics = {}
+            for set_name, set_metrics in metrics.items():
+                for metric_name, value in set_metrics.items():
+                    flattened_metrics[f"eval/{set_name}_{metric_name}"] = value
+            wandb.log(flattened_metrics, step=train_state.step)
 
         ############ Checkpointing
         if RANK == 0 and (config.checkpoint_every_eval or (_iter_id == total_iters - 1)):
