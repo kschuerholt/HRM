@@ -520,6 +520,10 @@ def launch(hydra_config: DictConfig):
         # Pass@k evaluation (separate forward pass)
         pass_at_k_results = {}
         if config.compute_pass_at_k:
+            print(f"[Rank {RANK}]: Starting pass@k evaluation (iteration {_iter_id}/{total_iters}) at step {train_state.step}")
+            import time
+            start_time = time.time()
+            
             pass_at_k_results = evaluate_pass_at_k(
                 train_state.model,
                 eval_loader,
@@ -528,6 +532,9 @@ def launch(hydra_config: DictConfig):
                 rank=RANK,
                 world_size=WORLD_SIZE,
             )
+            
+            elapsed = time.time() - start_time
+            print(f"[Rank {RANK}]: Pass@k evaluation completed in {elapsed:.1f}s")
 
         if RANK == 0 and metrics is not None:
             # Flatten evaluation metrics and add eval/ prefix

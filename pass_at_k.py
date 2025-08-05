@@ -278,12 +278,16 @@ def evaluate_pass_at_k(
             
             # Debug: Track evaluation progress
             batch_count = 0
+            import time
 
             carry = None
             for set_name, batch, global_batch_size in eval_loader:
                 batch_count += 1
-                if rank == 0 and batch_count % 10 == 0:
+                batch_start_time = time.time()
+                
+                if rank == 0 and batch_count % 50 == 0:
                     print(f"[Pass@k] Processing batch {batch_count} from {set_name}")
+                
                 # To device
                 batch = {k: v.cuda() for k, v in batch.items()}
                 with torch.device("cuda"):
@@ -314,6 +318,11 @@ def evaluate_pass_at_k(
                     if key in source:
                         all_preds.setdefault(key, [])
                         all_preds[key].append(source[key])  # Keep on CUDA
+                
+                # Debug: Track slow batches
+                batch_time = time.time() - batch_start_time
+                if batch_time > 2.0 and rank == 0:  # Log batches taking >2 seconds
+                    print(f"[Pass@k] SLOW batch {batch_count}: {batch_time:.1f}s, {iteration_count} ACT iterations")
 
             # Validate we collected required data
             required_keys = ["inputs", "labels", "puzzle_identifiers", "logits"]
@@ -323,14 +332,19 @@ def evaluate_pass_at_k(
                     print(f"[Rank {rank}]: Missing required keys for pass@k: {missing}")
                 return {}
 
+            print(f"[Pass@k Rank {rank}] Finished forward pass, collected {batch_count} batches")
+            
             # Concatenate all predictions from this rank (still on CUDA)
             # Each rank has evaluated different batches, so we concatenate our local batches
+            print(f"[Pass@k Rank {rank}] Concatenating local predictions...")
             all_preds = {k: torch.cat(v, dim=0) for k, v in all_preds.items()}
+            print(f"[Pass@k Rank {rank}] Local concatenation complete")
 
             # For multi-GPU: gather all predictions across ranks
             if world_size > 1:
                 import torch.distributed as dist
 
+                print(f"[Pass@k Rank {rank}] Starting distributed gather...")
                 if rank == 0:
                     print(f"[Pass@k] Starting all_gather with {len(all_preds)} keys")
                     for key, value in all_preds.items():
@@ -338,28 +352,32 @@ def evaluate_pass_at_k(
 
                 gathered_preds = {}
                 for key, value in all_preds.items():
+                    print(f"[Pass@k Rank {rank}] Gathering key '{key}'...")
                     try:
                         # all_gather requires all ranks to have tensors of same dtype/device
                         # We keep tensors on CUDA for the collective operation
                         gathered_values = [torch.zeros_like(value) for _ in range(world_size)]
                         dist.all_gather(gathered_values, value)
+                        print(f"[Pass@k Rank {rank}] all_gather completed for '{key}'")
                         
                         # After gathering, concatenate all ranks' predictions and move to CPU
                         # This gives us the complete evaluation dataset predictions
                         gathered_preds[key] = torch.cat(gathered_values, dim=0).cpu()
+                        print(f"[Pass@k Rank {rank}] Final concatenation completed for '{key}'")
                         
                         if rank == 0:
                             print(f"[Pass@k] Successfully gathered key '{key}': final shape={gathered_preds[key].shape}")
                             
                     except Exception as e:
-                        if rank == 0:
-                            print(f"[Pass@k] Error in all_gather for key '{key}': {e}")
-                            print(f"[Pass@k] Tensor details: shape={value.shape}, device={value.device}, dtype={value.dtype}")
+                        print(f"[Pass@k Rank {rank}] Error in all_gather for key '{key}': {e}")
+                        print(f"[Pass@k Rank {rank}] Tensor details: shape={value.shape}, device={value.device}, dtype={value.dtype}")
                         raise
                 
                 all_preds = gathered_preds
+                print(f"[Pass@k Rank {rank}] All distributed operations complete")
             else:
                 # Single GPU: just move to CPU
+                print(f"[Pass@k Rank {rank}] Single GPU: moving to CPU...")
                 all_preds = {k: v.cpu() for k, v in all_preds.items()}
 
             # Compute pass@k metrics (only on rank 0 to avoid duplicate computation)
