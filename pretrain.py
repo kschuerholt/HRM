@@ -453,7 +453,7 @@ def launch(hydra_config: DictConfig):
 
     train_loader, train_metadata = create_dataloader(
         config,
-        "training",
+        "train",
         test_set_mode=False,
         epochs_per_iter=train_epochs_per_iter,
         global_batch_size=config.global_batch_size,
@@ -462,7 +462,7 @@ def launch(hydra_config: DictConfig):
     )
     eval_loader, eval_metadata = create_dataloader(
         config,
-        "evaluation",
+        "test",
         test_set_mode=True,
         epochs_per_iter=1,
         global_batch_size=config.global_batch_size,
