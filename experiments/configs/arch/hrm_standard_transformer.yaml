@@ -1,13 +1,13 @@
-# HRM without hierarchical cycles (but keeps ACT)
+# Standard transformer (no hierarchy, no ACT)
 name: hrm.hrm_act_v1@HierarchicalReasoningModel_ACTV1
 loss:
   name: losses@ACTLossHead
   loss_type: stablemax_cross_entropy
 
 halt_exploration_prob: 0.1
-halt_max_steps: 16  # Keep ACT for fair comparison
+halt_max_steps: 1  # No ACT
 
-# No hierarchical cycling (single cycle each)
+# No hierarchical cycling (standard transformer)
 H_cycles: 1
 L_cycles: 1
 

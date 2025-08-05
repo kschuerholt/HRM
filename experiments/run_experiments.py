@@ -8,7 +8,7 @@ This script creates appropriate config files and calls their training script.
 EXPERIMENT SUITE OVERVIEW:
 ==========================
 
-Total Experiments: 7
+Total Experiments: 10
 
 1. step_0_pipeline_test (⚡ FAST TEST - 5-10 minutes)
    └── Purpose: Validate entire pipeline before long experiments
@@ -18,40 +18,23 @@ Total Experiments: 7
    └── Multi-GPU: Yes (tests distributed training)
 
 2. baseline_replication
-   └── Purpose: Attempt to replicate paper results with exact config
-   └── Model: Full HRM (512 hidden, 4 layers, 16 ACT steps)
+   └── Purpose: Full HRM baseline with all features
+   └── Model: Full HRM (512 hidden, H_cycles=2, L_cycles=2, ACT=16 steps)
    └── Data: arc-aug-1000 (1000 augmentations per puzzle)
-   └── Training: Full paper configuration
+   └── Training: 20,000 epochs (standardized)
 
-3. aug_ablation_0
-   └── Purpose: Test performance without data augmentation
-   └── Model: Full HRM
-   └── Data: arc-aug-0 (no augmentations)
-   └── Training: Standard configuration
+3-5. Data Augmentation Ablations (aug_ablation_0/300/1000)
+   └── Purpose: Test impact of data augmentation amount
+   └── Model: Full HRM (identical to baseline)
+   └── Data: arc-aug-{0,300,1000} augmentations per puzzle
+   └── Training: 20,000 epochs (same as baseline)
 
-4. aug_ablation_300
-   └── Purpose: Test performance with moderate augmentation
-   └── Model: Full HRM  
-   └── Data: arc-aug-300 (300 augmentations per puzzle)
-   └── Training: Standard configuration
-
-5. aug_ablation_1000
-   └── Purpose: Test performance with full augmentation (paper level)
-   └── Model: Full HRM
-   └── Data: arc-aug-1000 (1000 augmentations per puzzle)
-   └── Training: Standard configuration
-
-6. arch_no_hierarchy
-   └── Purpose: Test HRM vs standard transformer
-   └── Model: Standard transformer (H_cycles=1, L_cycles=1)
-   └── Data: arc-aug-1000
-   └── Training: Shorter (20000 epochs for ablation)
-
-7. arch_no_puzzle_emb
-   └── Purpose: Test importance of puzzle-specific embeddings
-   └── Model: HRM without puzzle embeddings (puzzle_emb_ndim=0)
-   └── Data: arc-aug-1000
-   └── Training: Shorter (20000 epochs for ablation)
+6-9. Architecture Ablations:
+   6. arch_no_hierarchy: Remove hierarchical cycles (H_cycles=1, L_cycles=1, keeps ACT)
+   7. arch_no_act: Remove ACT (halt_max_steps=1, keeps hierarchy)
+   8. arch_no_puzzle_emb: Remove puzzle embeddings (puzzle_emb_ndim=0)
+   9. arch_standard_transformer: Standard transformer (no hierarchy, no ACT)
+   └── All use: arc-aug-1000 data, 20,000 epochs (same as baseline)
 
 All experiments:
 - Use 8-GPU distributed training (automatic detection)
@@ -286,8 +269,10 @@ def create_experiment_definitions() -> List[Dict[str, Any]]:
     
     # Experiment 3: Architecture ablations
     arch_configs = [
-        ("no_hierarchy", "hrm_1x1", "Standard transformer (no H/L cycles)"),
+        ("no_hierarchy", "hrm_1x1", "HRM without hierarchical cycles (keeps ACT)"),
+        ("no_act", "hrm_no_act", "HRM without ACT (keeps hierarchical cycles)"),
         ("no_puzzle_emb", "hrm_no_puzzle_emb", "HRM without puzzle embeddings"),
+        ("standard_transformer", "hrm_standard_transformer", "Standard transformer (no hierarchy, no ACT)"),
     ]
     
     for name, arch, desc in arch_configs:
@@ -297,7 +282,7 @@ def create_experiment_definitions() -> List[Dict[str, Any]]:
             "overrides": {
                 "defaults": [f"/arch: {arch}", "_self_"],
                 "run_name": f"architecture_{name}",
-                "epochs": 20000  # Shorter for ablation
+                "epochs": 20000  # Standardized across all experiments
             },
             "description": desc
         })
