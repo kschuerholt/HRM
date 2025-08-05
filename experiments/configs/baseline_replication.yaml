@@ -11,8 +11,9 @@ data_path: data/arc-aug-1000
 # Training hyperparameters (matching paper)
 global_batch_size: 768
 epochs: 50000  # Reduced for faster experimentation
-eval_interval: 2000
-checkpoint_every_eval: true
+steps_per_epoch: 100    # Required field
+eval_every_n_epochs: 200  # Every 200 epochs (was eval_interval: 2000)
+save_every_n_epochs: 500  # Save checkpoints every 500 epochs
 
 # Learning rates (from paper)
 lr: 1e-4
@@ -28,7 +29,33 @@ puzzle_emb_weight_decay: 0.1
 # Puzzle embedding learning rate (key component)
 puzzle_emb_lr: 1e-2
 
+# Data
+max_seq_len: 900          # Standard sequence length
+
+# Optimizer
+optim:
+  name: torch.optim.AdamW
+  betas: [0.9, 0.95]
+  eps: 1e-8
+
+# Scheduler  
+scheduler:
+  name: transformers.get_cosine_schedule_with_warmup
+  num_warmup_steps: 2000
+  num_training_steps: 5000000  # epochs * steps_per_epoch
+
+# Logging and monitoring
+run_name: baseline_replication
+wandb:
+  project: hrm_experiments
+  name: baseline_replication
+  
+# Output
+output_dir: outputs/baseline_replication
+
+# Evaluation settings
+eval_split_names: ["test"]
+return_keys: ["q_halt_logits", "q_continue_logits"]  # For ACT analysis
+
 # Experiment specific
-project_name: "HRM Experiments"
-run_name: "baseline_replication"
 seed: 42
