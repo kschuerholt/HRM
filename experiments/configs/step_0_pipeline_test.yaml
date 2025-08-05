@@ -1,0 +1,50 @@
+# Step 0: Fast pipeline test configuration
+# Small model, minimal dataset, few epochs - tests entire pipeline quickly
+
+defaults:
+  - /arch: hrm_small
+  - _self_
+
+# Model and training
+global_batch_size: 32     # Very small batch size
+lr: 1e-3                  # Higher learning rate for faster convergence
+weight_decay: 1e-4
+
+# Puzzle embeddings
+puzzle_emb_lr: 1e-2       # Keep separate LR for puzzle embeddings
+puzzle_emb_weight_decay: 1.0
+
+# Training duration - very short
+epochs: 100               # Just 100 epochs instead of 20000+
+steps_per_epoch: 10       # Only 10 steps per epoch
+eval_every_n_epochs: 20   # Evaluate every 20 epochs
+save_every_n_epochs: 50   # Save checkpoints every 50 epochs
+
+# Data
+data_path: data/arc-test-minimal   # Will create a minimal dataset
+max_seq_len: 900          # Standard sequence length
+
+# Optimizer
+optim:
+  name: torch.optim.AdamW
+  betas: [0.9, 0.95]
+  eps: 1e-8
+
+# Scheduler  
+scheduler:
+  name: transformers.get_cosine_schedule_with_warmup
+  num_warmup_steps: 10    # Very short warmup
+  num_training_steps: 1000  # Total steps = epochs * steps_per_epoch
+
+# Logging and monitoring
+run_name: step_0_pipeline_test
+wandb:
+  project: hrm_experiments
+  name: step_0_pipeline_test
+  
+# Output
+output_dir: outputs/step_0
+
+# Evaluation settings
+eval_split_names: ["test"]
+return_keys: ["q_halt_logits", "q_continue_logits"]  # For ACT analysis

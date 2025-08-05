@@ -1,0 +1,23 @@
+# Standard transformer (no hierarchical cycles)
+name: hrm.hrm_act_v1@HierarchicalReasoningModel_ACTV1
+loss:
+  name: losses@ACTLossHead
+  loss_type: stablemax_cross_entropy
+
+halt_exploration_prob: 0.1
+halt_max_steps: 1  # No ACT
+
+# No hierarchical cycling (standard transformer)
+H_cycles: 1
+L_cycles: 1
+
+# Same total layers as baseline
+H_layers: 4
+L_layers: 4
+
+hidden_size: 512
+num_heads: 8
+expansion: 4
+
+puzzle_emb_ndim: ${.hidden_size}
+pos_encodings: rope

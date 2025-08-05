@@ -1,0 +1,23 @@
+# Small HRM model for fast pipeline testing
+name: hrm.hrm_act_v1@HierarchicalReasoningModel_ACTV1
+loss:
+  name: losses@ACTLossHead
+  loss_type: stablemax_cross_entropy
+
+halt_exploration_prob: 0.1
+halt_max_steps: 4  # Reduced from 16
+
+H_cycles: 1  # Reduced from 2
+L_cycles: 1  # Reduced from 2
+
+H_layers: 2  # Reduced from 4
+L_layers: 2  # Reduced from 4
+
+hidden_size: 128  # Reduced from 512
+num_heads: 4      # Reduced from 8
+expansion: 2      # Reduced from 4
+
+# Keep puzzle embeddings for testing
+puzzle_emb_ndim: 64  # Reduced from default
+
+pos_encodings: rope
