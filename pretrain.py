@@ -470,12 +470,6 @@ def launch(hydra_config: DictConfig):
         world_size=WORLD_SIZE,
     )
 
-    # Log dataloader info
-    if RANK == 0:
-        print(f"Train loader: {len(train_loader)} batches")
-        print(f"Eval loader: {len(eval_loader)} batches")
-        print(f"Eval sets: {eval_metadata.sets}")
-
     # Train state
     train_state = init_train_state(config, train_metadata, world_size=WORLD_SIZE)
 
