@@ -218,11 +218,12 @@ def compute_pass_at_k_from_preds(
                     pred_map[pred_hash][0] += 1
                     pred_map[pred_hash][1] += conf
 
-                # Average confidence and sort
+                # Average confidence and sort by (count, avg_confidence) tuple - matches original
                 for pred_hash, stats in pred_map.items():
                     stats[1] /= stats[0]  # Average confidence
 
-                top_k_preds = sorted(pred_map.items(), key=lambda x: x[1][1], reverse=True)[:k]
+                # Sort by the stats tuple: [count, avg_confidence] - just like original
+                top_k_preds = sorted(pred_map.items(), key=lambda x: x[1], reverse=True)[:k]
 
                 # Check if any top-k prediction matches ground truth
                 input_correct = any(pred_hash == label_hash for pred_hash, _ in top_k_preds)
@@ -287,38 +288,56 @@ def evaluate_pass_at_k(
                     if all_finish:
                         break
 
-                # Collect predictions
+                # Collect predictions - keep on CUDA for distributed operations
                 for key in ["inputs", "labels", "puzzle_identifiers", "logits", "q_halt_logits"]:
-                    if key in batch:
+                    source = batch if key in batch else preds
+                    if key in source:
                         all_preds.setdefault(key, [])
-                        all_preds[key].append(batch[key].cpu())
-                    elif key in preds:
-                        all_preds.setdefault(key, [])
-                        all_preds[key].append(preds[key].cpu())
+                        all_preds[key].append(source[key])  # Keep on CUDA
 
-            # Concatenate all predictions
-            if all_preds:
-                all_preds = {k: torch.cat(v, dim=0) for k, v in all_preds.items()}
-
-                # All-gather predictions across ranks
-                if world_size > 1:
-                    import torch.distributed as dist
-
-                    gathered_preds = {}
-                    for key, value in all_preds.items():
-                        gathered_values = [torch.zeros_like(value) for _ in range(world_size)]
-                        dist.all_gather(gathered_values, value)
-                        gathered_preds[key] = torch.cat(gathered_values, dim=0)
-                    all_preds = gathered_preds
-
-                # Compute pass@k metrics (only on rank 0)
+            # Validate we collected required data
+            required_keys = ["inputs", "labels", "puzzle_identifiers", "logits"]
+            if not all(key in all_preds for key in required_keys):
                 if rank == 0:
-                    pass_at_k_results = compute_pass_at_k_from_preds(all_preds, identifier_map, k_values)
+                    missing = [k for k in required_keys if k not in all_preds]
+                    print(f"[Rank {rank}]: Missing required keys for pass@k: {missing}")
+                return {}
 
-                    if pass_at_k_results:
-                        print(f"[Rank {rank}]: Pass@k results: {pass_at_k_results}")
+            # Concatenate all predictions from this rank (still on CUDA)
+            # Each rank has evaluated different batches, so we concatenate our local batches
+            all_preds = {k: torch.cat(v, dim=0) for k, v in all_preds.items()}
 
-                    return pass_at_k_results
+            # For multi-GPU: gather all predictions across ranks
+            if world_size > 1:
+                import torch.distributed as dist
+
+                gathered_preds = {}
+                for key, value in all_preds.items():
+                    # all_gather requires all ranks to have tensors of same dtype/device
+                    # We keep tensors on CUDA for the collective operation
+                    gathered_values = [torch.zeros_like(value) for _ in range(world_size)]
+                    dist.all_gather(gathered_values, value)
+                    
+                    # After gathering, concatenate all ranks' predictions and move to CPU
+                    # This gives us the complete evaluation dataset predictions
+                    gathered_preds[key] = torch.cat(gathered_values, dim=0).cpu()
+                
+                all_preds = gathered_preds
+            else:
+                # Single GPU: just move to CPU
+                all_preds = {k: v.cpu() for k, v in all_preds.items()}
+
+            # Compute pass@k metrics (only on rank 0 to avoid duplicate computation)
+            if rank == 0:
+                pass_at_k_results = compute_pass_at_k_from_preds(all_preds, identifier_map, k_values)
+
+                if pass_at_k_results:
+                    print(f"[Rank {rank}]: Pass@k results: {pass_at_k_results}")
+
+                return pass_at_k_results
+            else:
+                # Non-zero ranks return empty - they participated in all_gather but don't compute metrics
+                return {}
 
         return {}
 
