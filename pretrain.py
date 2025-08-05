@@ -489,7 +489,8 @@ def launch(hydra_config: DictConfig):
 
     # Training Loop
     for _iter_id in range(total_iters):
-        print(f"[Rank {RANK}, World Size {WORLD_SIZE}]: Epoch {_iter_id * train_epochs_per_iter}")
+        current_epoch = _iter_id * train_epochs_per_iter
+        print(f"[Rank {RANK}, World Size {WORLD_SIZE}]: Epoch {current_epoch}")
 
         ############ Train Iter
         train_state.model.train()
@@ -499,6 +500,7 @@ def launch(hydra_config: DictConfig):
             )
 
             if RANK == 0 and metrics is not None:
+                metrics["epoch"] = current_epoch
                 wandb.log(metrics, step=train_state.step)
                 progress_bar.update(train_state.step - progress_bar.n)  # type: ignore
 
@@ -506,12 +508,13 @@ def launch(hydra_config: DictConfig):
         train_state.model.eval()
         metrics = evaluate(config, train_state, eval_loader, eval_metadata, rank=RANK, world_size=WORLD_SIZE)
         if RANK == 0 and metrics is not None:
-            print(f"[Rank {RANK}, World Size {WORLD_SIZE}]: Logging metrics: {metrics}")
             # Flatten evaluation metrics and add eval/ prefix
             flattened_metrics = {}
             for set_name, set_metrics in metrics.items():
                 for metric_name, value in set_metrics.items():
                     flattened_metrics[f"eval/{set_name}_{metric_name}"] = value
+            flattened_metrics["epoch"] = current_epoch
+            print(f"[Rank {RANK}, World Size {WORLD_SIZE}]: Logging metrics: {flattened_metrics}")
             wandb.log(flattened_metrics, step=train_state.step)
 
         ############ Checkpointing
