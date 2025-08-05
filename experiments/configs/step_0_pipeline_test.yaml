@@ -8,7 +8,13 @@ defaults:
 # Model and training
 global_batch_size: 32     # Very small batch size
 lr: 1e-3                  # Higher learning rate for faster convergence
+lr_min_ratio: 1.0         # Required field
+lr_warmup_steps: 10       # Required field
 weight_decay: 1e-4
+
+# Optimizer settings (required fields)
+beta1: 0.9
+beta2: 0.95
 
 # Puzzle embeddings
 puzzle_emb_lr: 1e-2       # Keep separate LR for puzzle embeddings
