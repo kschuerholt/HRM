@@ -1,5 +1,10 @@
 # ARC training config
 
+## NOTE:
+# - relatively standard transformer training config.
+# - independent LR for the 'puzzle embeddings' -> the tokenizers?
+# - large batch size (768), given the 400 samples / 1000 augmentations per example
+
 defaults:
   - arch: hrm_v1
   - _self_
