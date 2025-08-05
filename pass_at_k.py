@@ -119,6 +119,9 @@ def compute_pass_at_k_from_preds(
     required_keys = ["puzzle_identifiers", "inputs", "labels", "logits"]
     if not all_preds or not all(key in all_preds for key in required_keys):
         return {}
+    
+    # Ensure all tensors are on CPU (they should already be, but be safe)
+    all_preds = {k: v.cpu() if v.is_cuda else v for k, v in all_preds.items()}
 
     # Remove padded entries
     mask = all_preds["puzzle_identifiers"] != PAD_PUZZLE_IDENTIFIER
@@ -265,19 +268,30 @@ def evaluate_pass_at_k(
             if rank == 0:
                 print(f"[Rank {rank}]: No identifier map found, skipping pass@k computation")
             return {}
+        
+        if rank == 0:
+            print(f"[Pass@k] Starting evaluation with {len(identifier_map)} identifiers")
 
         # Run forward pass to collect predictions
         with torch.inference_mode():
             all_preds = {}
+            
+            # Debug: Track evaluation progress
+            batch_count = 0
 
             carry = None
             for set_name, batch, global_batch_size in eval_loader:
+                batch_count += 1
+                if rank == 0 and batch_count % 10 == 0:
+                    print(f"[Pass@k] Processing batch {batch_count} from {set_name}")
                 # To device
                 batch = {k: v.cuda() for k, v in batch.items()}
                 with torch.device("cuda"):
                     carry = model.initial_carry(batch)
 
-                # Forward pass
+                # Forward pass with safety counter
+                max_iterations = 100  # Safety limit
+                iteration_count = 0
                 while True:
                     carry, _, metrics, preds, all_finish = model(
                         carry=carry,
@@ -285,7 +299,13 @@ def evaluate_pass_at_k(
                         return_keys=["inputs", "labels", "puzzle_identifiers", "logits", "q_halt_logits"],
                     )
 
+                    iteration_count += 1
                     if all_finish:
+                        break
+                    
+                    if iteration_count >= max_iterations:
+                        if rank == 0:
+                            print(f"[WARNING] Pass@k evaluation: Max iterations ({max_iterations}) reached for batch from {set_name}")
                         break
 
                 # Collect predictions - keep on CUDA for distributed operations
@@ -311,16 +331,31 @@ def evaluate_pass_at_k(
             if world_size > 1:
                 import torch.distributed as dist
 
+                if rank == 0:
+                    print(f"[Pass@k] Starting all_gather with {len(all_preds)} keys")
+                    for key, value in all_preds.items():
+                        print(f"[Pass@k] Key '{key}': shape={value.shape}, device={value.device}, dtype={value.dtype}")
+
                 gathered_preds = {}
                 for key, value in all_preds.items():
-                    # all_gather requires all ranks to have tensors of same dtype/device
-                    # We keep tensors on CUDA for the collective operation
-                    gathered_values = [torch.zeros_like(value) for _ in range(world_size)]
-                    dist.all_gather(gathered_values, value)
-                    
-                    # After gathering, concatenate all ranks' predictions and move to CPU
-                    # This gives us the complete evaluation dataset predictions
-                    gathered_preds[key] = torch.cat(gathered_values, dim=0).cpu()
+                    try:
+                        # all_gather requires all ranks to have tensors of same dtype/device
+                        # We keep tensors on CUDA for the collective operation
+                        gathered_values = [torch.zeros_like(value) for _ in range(world_size)]
+                        dist.all_gather(gathered_values, value)
+                        
+                        # After gathering, concatenate all ranks' predictions and move to CPU
+                        # This gives us the complete evaluation dataset predictions
+                        gathered_preds[key] = torch.cat(gathered_values, dim=0).cpu()
+                        
+                        if rank == 0:
+                            print(f"[Pass@k] Successfully gathered key '{key}': final shape={gathered_preds[key].shape}")
+                            
+                    except Exception as e:
+                        if rank == 0:
+                            print(f"[Pass@k] Error in all_gather for key '{key}': {e}")
+                            print(f"[Pass@k] Tensor details: shape={value.shape}, device={value.device}, dtype={value.dtype}")
+                        raise
                 
                 all_preds = gathered_preds
             else:
