@@ -92,9 +92,9 @@ class ACTLossHead(nn.Module):
             if hasattr(self.model, '_hrm_metrics'):
                 hrm_metrics = self.model._hrm_metrics
                 
-                # H residual norms (simple scalar aggregation)
+                # H residual norms (convert tensors to scalars here)
                 if hrm_metrics.get('h_residual_norms'):
-                    h_residuals = hrm_metrics['h_residual_norms']  # List of floats
+                    h_residuals = [t.item() for t in hrm_metrics['h_residual_norms']]  # Convert tensors to floats
                     if h_residuals:
                         metrics.update({
                             "h_residual_mean": torch.tensor(sum(h_residuals) / len(h_residuals), device='cuda'),
@@ -106,9 +106,9 @@ class ACTLossHead(nn.Module):
                         for i, residual in enumerate(h_residuals):
                             metrics[f"h_residual_cycle_{i}"] = torch.tensor(residual, device='cuda')
                 
-                # L residual norms (simple scalar aggregation)
+                # L residual norms (convert tensors to scalars here)
                 if hrm_metrics.get('l_residual_norms'):
-                    l_residuals = hrm_metrics['l_residual_norms']  # List of floats
+                    l_residuals = [t.item() for t in hrm_metrics['l_residual_norms']]  # Convert tensors to floats
                     if l_residuals:
                         metrics.update({
                             "l_residual_mean": torch.tensor(sum(l_residuals) / len(l_residuals), device='cuda'),
@@ -120,14 +120,14 @@ class ACTLossHead(nn.Module):
                         for i, residual in enumerate(l_residuals):
                             metrics[f"l_residual_cycle_{i}"] = torch.tensor(residual, device='cuda')
                 
-                # Activation norms (simple scalar aggregation)
+                # Activation norms (convert tensors to scalars here)
                 if hrm_metrics.get('h_activation_norms'):
-                    h_activations = hrm_metrics['h_activation_norms']  # List of floats
+                    h_activations = [t.item() for t in hrm_metrics['h_activation_norms']]  # Convert tensors to floats
                     if h_activations:
                         metrics["h_activation_mean"] = torch.tensor(sum(h_activations) / len(h_activations), device='cuda')
                         
                 if hrm_metrics.get('l_activation_norms'):
-                    l_activations = hrm_metrics['l_activation_norms']  # List of floats
+                    l_activations = [t.item() for t in hrm_metrics['l_activation_norms']]  # Convert tensors to floats
                     if l_activations:
                         metrics["l_activation_mean"] = torch.tensor(sum(l_activations) / len(l_activations), device='cuda')
                 

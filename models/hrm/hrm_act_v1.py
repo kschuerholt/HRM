@@ -277,8 +277,8 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
             
             # Track initial activation norms (only during training) 
             if track_metrics:
-                h_activation_norms.append(torch.norm(z_H, dim=-1).mean().detach().cpu().item())
-                l_activation_norms.append(torch.norm(z_L, dim=-1).mean().detach().cpu().item())
+                h_activation_norms.append(torch.norm(z_H, dim=-1).mean().detach().cpu())
+                l_activation_norms.append(torch.norm(z_L, dim=-1).mean().detach().cpu())
 
             for _H_step in range(self.config.H_cycles):
                 for _L_step in range(self.config.L_cycles):
@@ -289,8 +289,8 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
                         
                         # Track L-level residual norm (only during training)
                         if track_metrics:
-                            l_residual_norms.append(torch.norm(z_L - z_L_prev, dim=-1).mean().detach().cpu().item())
-                            l_activation_norms.append(torch.norm(z_L, dim=-1).mean().detach().cpu().item())
+                            l_residual_norms.append(torch.norm(z_L - z_L_prev, dim=-1).mean().detach().cpu())
+                            l_activation_norms.append(torch.norm(z_L, dim=-1).mean().detach().cpu())
 
                 if not (_H_step == self.config.H_cycles - 1):
                     ## NOTE: - z_L is the injection to the H_Level, z_H is the input to the H_Level
@@ -299,8 +299,8 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
                     
                     # Track H-level residual norm (only during training)
                     if track_metrics:
-                        h_residual_norms.append(torch.norm(z_H - z_H_prev, dim=-1).mean().detach().cpu().item())
-                        h_activation_norms.append(torch.norm(z_H, dim=-1).mean().detach().cpu().item())
+                        h_residual_norms.append(torch.norm(z_H - z_H_prev, dim=-1).mean().detach().cpu())
+                        h_activation_norms.append(torch.norm(z_H, dim=-1).mean().detach().cpu())
 
         assert not z_H.requires_grad and not z_L.requires_grad
 
@@ -314,8 +314,8 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
         
         # Track final gradient step residuals (only during training)  
         if track_metrics:
-            l_residual_norms.append(torch.norm(z_L - z_L_prev_grad, dim=-1).mean().detach().cpu().item())
-            h_residual_norms.append(torch.norm(z_H - z_H_prev_grad, dim=-1).mean().detach().cpu().item())
+            l_residual_norms.append(torch.norm(z_L - z_L_prev_grad, dim=-1).mean().detach().cpu())
+            h_residual_norms.append(torch.norm(z_H - z_H_prev_grad, dim=-1).mean().detach().cpu())
             
             # Store metrics in a global dict for the loss head to access
             if not hasattr(self, '_hrm_metrics'):
