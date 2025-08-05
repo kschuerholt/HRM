@@ -7,7 +7,7 @@ by handling grid cropping, augmentation reversal, and confidence-based ranking.
 
 import os
 import json
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, List
 import numpy as np
 import torch
 from numba import njit
@@ -118,22 +118,8 @@ def compute_pass_at_k_from_preds(
         Dictionary with pass@k metrics
     """
     # Validate inputs
-    if not isinstance(all_preds, dict):
-        print(f"Error: all_preds must be a dictionary, got {type(all_preds)}")
-        return {}
-
-    if not all_preds or "puzzle_identifiers" not in all_preds:
-        print(f"Error: Missing required data. Available keys: {list(all_preds.keys())}")
-        return {}
-
     required_keys = ["puzzle_identifiers", "inputs", "labels", "logits"]
-    missing_keys = [key for key in required_keys if key not in all_preds]
-    if missing_keys:
-        print(f"Error: Missing required keys: {missing_keys}")
-        return {}
-
-    if not isinstance(identifier_map, dict):
-        print(f"Error: identifier_map must be a dictionary, got {type(identifier_map)}")
+    if not all_preds or not all(key in all_preds for key in required_keys):
         return {}
 
     # Remove padded entries
@@ -303,26 +289,14 @@ def evaluate_pass_at_k(
                     if all_finish:
                         break
 
-                # Collect predictions with better error handling
+                # Collect predictions
                 for key in ["inputs", "labels", "puzzle_identifiers", "logits", "q_halt_logits"]:
-                    found = False
-                    if isinstance(batch, dict) and key in batch:
+                    if key in batch:
                         all_preds.setdefault(key, [])
                         all_preds[key].append(batch[key].cpu())
-                        found = True
-                    elif isinstance(preds, dict) and key in preds:
+                    elif key in preds:
                         all_preds.setdefault(key, [])
                         all_preds[key].append(preds[key].cpu())
-                        found = True
-
-                    if not found and rank == 0:
-                        print(f"Warning: Key '{key}' not found in batch or preds")
-                        print(
-                            f"Batch type: {type(batch)}, keys: {list(batch.keys()) if isinstance(batch, dict) else 'N/A'}"
-                        )
-                        print(
-                            f"Preds type: {type(preds)}, keys: {list(preds.keys()) if isinstance(preds, dict) else 'N/A'}"
-                        )
 
             # Concatenate all predictions
             if all_preds:
@@ -374,33 +348,22 @@ def load_identifier_map(dataset_path: str) -> Dict[int, str]:
     """
     identifiers_file = os.path.join(dataset_path, "identifiers.json")
 
-    if os.path.exists(identifiers_file):
-        try:
-            with open(identifiers_file, "r") as f:
-                data = json.load(f)
+    if not os.path.exists(identifiers_file):
+        return {}
 
-                # Check if data is a dictionary (expected format)
-                if isinstance(data, dict):
-                    # Convert string keys to integers if needed
-                    if data and isinstance(next(iter(data.keys())), str):
-                        return {int(k): v for k, v in data.items()}
-                    return data
-                elif isinstance(data, list):
-                    print(
-                        f"Warning: {identifiers_file} contains a list instead of expected dictionary format"
-                    )
-                    print(f"Expected format: {{'1': 'puzzle_name_1', '2': 'puzzle_name_2', ...}}")
-                    print(f"Found format: {type(data).__name__} with {len(data)} elements")
-                    return {}
-                else:
-                    print(f"Warning: {identifiers_file} contains unexpected data type: {type(data).__name__}")
-                    return {}
-        except json.JSONDecodeError as e:
-            print(f"Error: Failed to parse {identifiers_file}: {e}")
-            return {}
-        except Exception as e:
-            print(f"Error: Failed to load {identifiers_file}: {e}")
-            return {}
-    else:
-        print(f"Warning: Identifiers file not found: {identifiers_file}")
+    try:
+        with open(identifiers_file, "r") as f:
+            data = json.load(f)
+
+        if isinstance(data, dict):
+            # Convert string keys to integers if needed
+            if data and isinstance(next(iter(data.keys())), str):
+                return {int(k): v for k, v in data.items()}
+            return data
+        elif isinstance(data, list):
+            # Convert list format [name0, name1, name2, ...] to dict {0: name0, 1: name1, ...}
+            return {i: name for i, name in enumerate(data) if isinstance(name, str)}
+
+        return {}
+    except Exception:
         return {}
