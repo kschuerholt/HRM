@@ -64,9 +64,15 @@ def crop_arc_grid(grid: np.ndarray, grid_size: int = 30) -> np.ndarray:
     return grid[: max_size[0], : max_size[1]] - 2
 
 
-def grid_hash(grid: np.ndarray) -> int:
+def grid_hash(grid: np.ndarray, target_dtype=None) -> int:
     """Create hash for grid comparison."""
-    return hash((grid.tobytes(), grid.shape))
+    if target_dtype is not None:
+        # Cast to target dtype for consistent hashing
+        normalized_grid = grid.astype(target_dtype)
+    else:
+        # Use original dtype
+        normalized_grid = grid
+    return hash((normalized_grid.tobytes(), normalized_grid.shape))
 
 
 def inverse_aug(name: str, grid: np.ndarray) -> np.ndarray:
@@ -90,8 +96,21 @@ def inverse_aug(name: str, grid: np.ndarray) -> np.ndarray:
     try:
         trans_id, perm = parts[-2:]
         trans_id = int(trans_id[1:])  # Remove "t" letter
-        inv_perm = np.argsort(list(perm))
-        return inv_perm[inverse_dihedral_transform(grid, trans_id)]
+        
+        # Apply inverse dihedral transform first
+        grid_after_spatial = inverse_dihedral_transform(grid, trans_id)
+        
+        # Apply inverse color permutation
+        inv_perm = np.argsort([int(c) for c in perm])
+        
+        # Create a mapping from current colors to original colors
+        # Only remap values that are within the permutation range
+        result = grid_after_spatial.copy()
+        for current_color in range(len(inv_perm)):
+            original_color = inv_perm[current_color]
+            result[grid_after_spatial == current_color] = original_color
+            
+        return result
     except (ValueError, IndexError, TypeError):
         return grid
 
@@ -119,9 +138,6 @@ def compute_pass_at_k_from_preds(
     required_keys = ["puzzle_identifiers", "inputs", "labels", "logits"]
     if not all_preds or not all(key in all_preds for key in required_keys):
         return {}
-    
-    # Ensure all tensors are on CPU (they should already be, but be safe)
-    all_preds = {k: v.cpu() if v.is_cuda else v for k, v in all_preds.items()}
 
     # Remove padded entries
     mask = all_preds["puzzle_identifiers"] != PAD_PUZZLE_IDENTIFIER
@@ -133,6 +149,7 @@ def compute_pass_at_k_from_preds(
     # Group ground truth by puzzle and input
     puzzle_labels = {}
     global_hmap = {}
+    reference_dtype = None  # Will be set from first ground truth grid
 
     for identifier, input_tensor, label_tensor in zip(
         filtered_preds["puzzle_identifiers"], filtered_preds["inputs"], filtered_preds["labels"]
@@ -140,11 +157,15 @@ def compute_pass_at_k_from_preds(
         name = identifier_map.get(identifier.item(), f"unknown_{identifier.item()}")
 
         # Only process non-augmented puzzles for ground truth
-        if "_" not in name:
+        if "_t" not in name:
             puzzle_labels.setdefault(name, {})
 
             input_grid = crop_arc_grid(input_tensor.cpu().numpy())
             label_grid = crop_arc_grid(label_tensor.cpu().numpy())
+
+            # Set reference dtype from first ground truth
+            if reference_dtype is None:
+                reference_dtype = label_grid.dtype
 
             input_hash = grid_hash(input_grid)
             label_hash = grid_hash(label_grid)
@@ -166,7 +187,11 @@ def compute_pass_at_k_from_preds(
         zip(filtered_preds["puzzle_identifiers"], filtered_preds["inputs"], preds)
     ):
         name = identifier_map.get(identifier.item(), f"unknown_{identifier.item()}")
-        orig_name = name.split("_")[0]
+        # Extract original puzzle name (everything before "_t")
+        if "_t" in name:
+            orig_name = name.split("_t")[0]
+        else:
+            orig_name = name
 
         if orig_name not in puzzle_labels:
             continue
@@ -180,7 +205,8 @@ def compute_pass_at_k_from_preds(
 
         # Apply inverse augmentation to prediction
         pred_grid = inverse_aug(name, crop_arc_grid(pred.cpu().numpy()))
-        pred_hash = grid_hash(pred_grid)
+        # Use reference dtype for consistent hashing with ground truth
+        pred_hash = grid_hash(pred_grid, target_dtype=reference_dtype)
         global_hmap[pred_hash] = pred_grid
 
         # Get confidence score
@@ -268,14 +294,14 @@ def evaluate_pass_at_k(
             if rank == 0:
                 print(f"[Rank {rank}]: No identifier map found, skipping pass@k computation")
             return {}
-        
+
         if rank == 0:
             print(f"[Pass@k] Starting evaluation with {len(identifier_map)} identifiers")
 
         # Run forward pass to collect predictions
         with torch.inference_mode():
             all_preds = {}
-            
+
             # Debug: Track evaluation progress
             batch_count = 0
             import time
@@ -284,10 +310,10 @@ def evaluate_pass_at_k(
             for set_name, batch, global_batch_size in eval_loader:
                 batch_count += 1
                 batch_start_time = time.time()
-                
+
                 if rank == 0 and batch_count % 50 == 0:
                     print(f"[Pass@k] Processing batch {batch_count} from {set_name}")
-                
+
                 # To device
                 batch = {k: v.cuda() for k, v in batch.items()}
                 with torch.device("cuda"):
@@ -306,10 +332,12 @@ def evaluate_pass_at_k(
                     iteration_count += 1
                     if all_finish:
                         break
-                    
+
                     if iteration_count >= max_iterations:
                         if rank == 0:
-                            print(f"[WARNING] Pass@k evaluation: Max iterations ({max_iterations}) reached for batch from {set_name}")
+                            print(
+                                f"[WARNING] Pass@k evaluation: Max iterations ({max_iterations}) reached for batch from {set_name}"
+                            )
                         break
 
                 # Collect predictions - keep on CUDA for distributed operations
@@ -318,11 +346,13 @@ def evaluate_pass_at_k(
                     if key in source:
                         all_preds.setdefault(key, [])
                         all_preds[key].append(source[key])  # Keep on CUDA
-                
+
                 # Debug: Track slow batches
                 batch_time = time.time() - batch_start_time
                 if batch_time > 2.0 and rank == 0:  # Log batches taking >2 seconds
-                    print(f"[Pass@k] SLOW batch {batch_count}: {batch_time:.1f}s, {iteration_count} ACT iterations")
+                    print(
+                        f"[Pass@k] SLOW batch {batch_count}: {batch_time:.1f}s, {iteration_count} ACT iterations"
+                    )
 
             # Validate we collected required data
             required_keys = ["inputs", "labels", "puzzle_identifiers", "logits"]
@@ -333,7 +363,7 @@ def evaluate_pass_at_k(
                 return {}
 
             print(f"[Pass@k Rank {rank}] Finished forward pass, collected {batch_count} batches")
-            
+
             # Concatenate all predictions from this rank (still on CUDA)
             # Each rank has evaluated different batches, so we concatenate our local batches
             print(f"[Pass@k Rank {rank}] Concatenating local predictions...")
@@ -348,7 +378,9 @@ def evaluate_pass_at_k(
                 if rank == 0:
                     print(f"[Pass@k] Starting all_gather with {len(all_preds)} keys")
                     for key, value in all_preds.items():
-                        print(f"[Pass@k] Key '{key}': shape={value.shape}, device={value.device}, dtype={value.dtype}")
+                        print(
+                            f"[Pass@k] Key '{key}': shape={value.shape}, device={value.device}, dtype={value.dtype}"
+                        )
 
                 gathered_preds = {}
                 for key, value in all_preds.items():
@@ -359,20 +391,24 @@ def evaluate_pass_at_k(
                         gathered_values = [torch.zeros_like(value) for _ in range(world_size)]
                         dist.all_gather(gathered_values, value)
                         print(f"[Pass@k Rank {rank}] all_gather completed for '{key}'")
-                        
+
                         # After gathering, concatenate all ranks' predictions and move to CPU
                         # This gives us the complete evaluation dataset predictions
                         gathered_preds[key] = torch.cat(gathered_values, dim=0).cpu()
                         print(f"[Pass@k Rank {rank}] Final concatenation completed for '{key}'")
-                        
+
                         if rank == 0:
-                            print(f"[Pass@k] Successfully gathered key '{key}': final shape={gathered_preds[key].shape}")
-                            
+                            print(
+                                f"[Pass@k] Successfully gathered key '{key}': final shape={gathered_preds[key].shape}"
+                            )
+
                     except Exception as e:
                         print(f"[Pass@k Rank {rank}] Error in all_gather for key '{key}': {e}")
-                        print(f"[Pass@k Rank {rank}] Tensor details: shape={value.shape}, device={value.device}, dtype={value.dtype}")
+                        print(
+                            f"[Pass@k Rank {rank}] Tensor details: shape={value.shape}, device={value.device}, dtype={value.dtype}"
+                        )
                         raise
-                
+
                 all_preds = gathered_preds
                 print(f"[Pass@k Rank {rank}] All distributed operations complete")
             else:
@@ -382,10 +418,39 @@ def evaluate_pass_at_k(
 
             # Compute pass@k metrics (only on rank 0 to avoid duplicate computation)
             if rank == 0:
+                # Debug: Print some sample data to understand what we have
+                print(f"[Pass@k Debug] Sample of collected data:")
+                print(f"  Total examples: {all_preds['puzzle_identifiers'].shape[0]}")
+                print(f"  Logits shape: {all_preds['logits'].shape}")
+                print(f"  Inputs shape: {all_preds['inputs'].shape}")
+                print(f"  Labels shape: {all_preds['labels'].shape}")
+                
+                # Sample a few examples
+                for i in range(min(3, all_preds['puzzle_identifiers'].shape[0])):
+                    identifier = all_preds['puzzle_identifiers'][i].item()
+                    name = identifier_map.get(identifier, f"unknown_{identifier}")
+                    print(f"  Example {i}: identifier={identifier}, name='{name}'")
+                    
+                    # Check logits range
+                    logits_sample = all_preds['logits'][i]
+                    print(f"    Logits min/max: {logits_sample.min():.3f}/{logits_sample.max():.3f}")
+                    
+                    # Check prediction
+                    pred = logits_sample.argmax(-1)
+                    print(f"    Prediction shape: {pred.shape}, values range: {pred.min()}-{pred.max()}")
+                    
+                    # Check input/label
+                    input_vals = all_preds['inputs'][i]
+                    label_vals = all_preds['labels'][i] 
+                    print(f"    Input range: {input_vals.min()}-{input_vals.max()}")
+                    print(f"    Label range: {label_vals.min()}-{label_vals.max()}")
+                
                 pass_at_k_results = compute_pass_at_k_from_preds(all_preds, identifier_map, k_values)
 
                 if pass_at_k_results:
                     print(f"[Rank {rank}]: Pass@k results: {pass_at_k_results}")
+                else:
+                    print(f"[Rank {rank}]: Pass@k results are empty - investigating why...")
 
                 return pass_at_k_results
             else:
