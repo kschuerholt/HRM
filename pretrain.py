@@ -223,12 +223,17 @@ def train_batch(
     # To device
     batch = {k: v.cuda() for k, v in batch.items()}
 
-    # Init carry if it is None
+    # Initialize carry only for the very first batch (carry=None initially)
+    # NOTE: After first batch, carry persists across batches enabling temporal multiplexing
     if train_state.carry is None:
         with torch.device("cuda"):
             train_state.carry = train_state.model.initial_carry(batch)  # type: ignore
 
-    # Forward
+    # Forward pass with persistent carry
+    # NOTE: This is where ACT temporal multiplexing happens:
+    # - Non-halted sequences continue working on problems from previous batches
+    # - Halted sequences get fresh problems from the current batch
+    # - Each sequence can spend variable time (across batches) on its current problem
     train_state.carry, loss, metrics, _, _ = train_state.model(
         carry=train_state.carry, batch=batch, return_keys=[]
     )
@@ -322,13 +327,16 @@ def evaluate(
             with torch.device("cuda"):
                 carry = train_state.model.initial_carry(batch)  # type: ignore
 
-            # Forward
+            # Forward - Evaluation uses different temporal pattern than training
+            # NOTE: In eval, we iterate until ALL sequences halt (convergence)
+            # Unlike training where sequences work across batches, eval sequences
+            # get multiple reasoning steps within the same batch until convergence
             while True:
                 carry, _, metrics, preds, all_finish = train_state.model(
                     carry=carry, batch=batch, return_keys=config.eval_save_outputs
                 )
 
-                if all_finish:
+                if all_finish:  # All sequences have halted/converged
                     break
 
             for collection in (batch, preds):
@@ -499,6 +507,9 @@ def launch(hydra_config: DictConfig):
 
         ############ Train Iter
         train_state.model.train()
+        # NOTE: This batch loop is the "outer iteration" for ACT temporal multiplexing
+        # Each batch can contain: mix of new problems (for halted sequences) +
+        # continued problems (for non-halted sequences from previous batches)
         for set_name, batch, global_batch_size in train_loader:
             metrics = train_batch(
                 config, train_state, batch, global_batch_size, rank=RANK, world_size=WORLD_SIZE
@@ -520,10 +531,13 @@ def launch(hydra_config: DictConfig):
         # Pass@k evaluation (separate forward pass)
         pass_at_k_results = {}
         if config.compute_pass_at_k:
-            print(f"[Rank {RANK}]: Starting pass@k evaluation (iteration {_iter_id}/{total_iters}) at step {train_state.step}")
+            print(
+                f"[Rank {RANK}]: Starting pass@k evaluation (iteration {_iter_id}/{total_iters}) at step {train_state.step}"
+            )
             import time
+
             start_time = time.time()
-            
+
             pass_at_k_results = evaluate_pass_at_k(
                 train_state.model,
                 eval_loader,
@@ -532,7 +546,7 @@ def launch(hydra_config: DictConfig):
                 rank=RANK,
                 world_size=WORLD_SIZE,
             )
-            
+
             elapsed = time.time() - start_time
             print(f"[Rank {RANK}]: Pass@k evaluation completed in {elapsed:.1f}s")
 

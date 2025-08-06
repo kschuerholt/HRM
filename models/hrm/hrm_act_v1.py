@@ -274,8 +274,8 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
         # NOTE: gradient-free forward passes through H-level and L-level to update z_H and z_L.
         with torch.no_grad():
             z_H, z_L = carry.z_H, carry.z_L
-            
-            # Track initial activation norms (only during training) 
+
+            # Track initial activation norms (only during training)
             if track_metrics:
                 h_activation_norms.append(torch.norm(z_H, dim=-1).mean().detach().cpu())
                 l_activation_norms.append(torch.norm(z_L, dim=-1).mean().detach().cpu())
@@ -286,7 +286,7 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
                         ## NOTE: - z_H + input_embeddings are the 'injection' to the z_L, z_L is the input to z_L
                         z_L_prev = z_L
                         z_L = self.L_level(z_L, z_H + input_embeddings, **seq_info)
-                        
+
                         # Track L-level residual norm (only during training)
                         if track_metrics:
                             l_residual_norms.append(torch.norm(z_L - z_L_prev, dim=-1).mean().detach().cpu())
@@ -296,7 +296,7 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
                     ## NOTE: - z_L is the injection to the H_Level, z_H is the input to the H_Level
                     z_H_prev = z_H
                     z_H = self.H_level(z_H, z_L, **seq_info)
-                    
+
                     # Track H-level residual norm (only during training)
                     if track_metrics:
                         h_residual_norms.append(torch.norm(z_H - z_H_prev, dim=-1).mean().detach().cpu())
@@ -307,31 +307,33 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
         # 1-step grad
         ## NOTE: One further step of z_L and z_H through the H_Level and L_Level, this time with gradients.
         z_L_prev_grad = z_L
-        z_L = self.L_level(z_L, z_H + input_embeddings, **seq_info) 
-        
+        z_L = self.L_level(z_L, z_H + input_embeddings, **seq_info)
+
         z_H_prev_grad = z_H
         z_H = self.H_level(z_H, z_L, **seq_info)
-        
-        # Track final gradient step residuals (only during training)  
+
+        # Track final gradient step residuals (only during training)
         if track_metrics:
             l_residual_norms.append(torch.norm(z_L - z_L_prev_grad, dim=-1).mean().detach().cpu())
             h_residual_norms.append(torch.norm(z_H - z_H_prev_grad, dim=-1).mean().detach().cpu())
-            
+
             # Store metrics in a global dict for the loss head to access
-            if not hasattr(self, '_hrm_metrics'):
+            if not hasattr(self, "_hrm_metrics"):
                 self._hrm_metrics = {}
-            
-            self._hrm_metrics.update({
-                'h_residual_norms': h_residual_norms,
-                'l_residual_norms': l_residual_norms, 
-                'h_activation_norms': h_activation_norms,
-                'l_activation_norms': l_activation_norms,
-                'h_cycles_executed': len(h_residual_norms),
-                'l_cycles_executed': len(l_residual_norms),
-            })
+
+            self._hrm_metrics.update(
+                {
+                    "h_residual_norms": h_residual_norms,
+                    "l_residual_norms": l_residual_norms,
+                    "h_activation_norms": h_activation_norms,
+                    "l_activation_norms": l_activation_norms,
+                    "h_cycles_executed": len(h_residual_norms),
+                    "l_cycles_executed": len(l_residual_norms),
+                }
+            )
         else:
             # Clear metrics during eval to avoid stale data
-            if hasattr(self, '_hrm_metrics'):
+            if hasattr(self, "_hrm_metrics"):
                 self._hrm_metrics = {}
 
         # LM Outputs
@@ -367,11 +369,11 @@ class HierarchicalReasoningModel_ACTV1(nn.Module):
         return HierarchicalReasoningModel_ACTV1Carry(
             inner_carry=self.inner.empty_carry(
                 batch_size
-            ),  # Empty is expected, it will be reseted in first pass as all sequences are halted.
-            steps=torch.zeros((batch_size,), dtype=torch.int32),
+            ),  # Empty is expected, will be reset since all sequences start halted
+            steps=torch.zeros((batch_size,), dtype=torch.int32),  # Step counter per sequence
             halted=torch.ones(
                 (batch_size,), dtype=torch.bool
-            ),  # Default to halted ## NOTE: halted are initialized to 1.
+            ),  # Default to halted - all sequences start with fresh problems from first batch
             current_data={k: torch.empty_like(v) for k, v in batch.items()},
         )
 
@@ -382,12 +384,20 @@ class HierarchicalReasoningModel_ACTV1(nn.Module):
         Questions:
         - how is the carry initialized? Are all sequences halted? If so, how are new_steps computed?
         """
-        # Update data, carry (removing halted sequences) # NOTE: this overrides the sequences that are halted and re-initializes them.
+        # Update data, carry (temporal multiplexing across batches)
+        # NOTE: This implements the core ACT mechanism where sequences work on problems for variable time
+        # - Halted sequences get reset and receive fresh problems from the new batch
+        # - Non-halted sequences continue working on their existing problems across batches
         new_inner_carry = self.inner.reset_carry(carry.halted, carry.inner_carry)
 
-        ## NOTE: this gets the steps tensor. If sequences are halted, they are set to 0, otherwise they are set to carry.steps. why on earth is this not done in reset_carry?
+        # NOTE: Step counter tracks how many batches each sequence has spent on its current problem
+        # Halted sequences reset to 0 (starting fresh), non-halted sequences increment their counter
         new_steps = torch.where(carry.halted, 0, carry.steps)
 
+        # NOTE: Critical temporal multiplexing logic - mix old and new data based on halting state
+        # halted[i]=True:  use batch[k][i] (fresh problem from new batch)
+        # halted[i]=False: use v[i] (continue same problem from carry.current_data)
+        # This allows hard problems to persist across batches while easy ones cycle through quickly
         new_current_data = {
             k: torch.where(carry.halted.view((-1,) + (1,) * (batch[k].ndim - 1)), batch[k], v)
             for k, v in carry.current_data.items()
@@ -398,35 +408,34 @@ class HierarchicalReasoningModel_ACTV1(nn.Module):
             new_inner_carry, new_current_data
         )
 
-        ## NOTE: - output of the inner loop are the new_inner_carry, logits, and q_logits (q_halt_logits, q_continue_logits)
+        # NOTE: Outputs from inner model - logits for next token prediction and Q-values for halting decisions
         outputs = {"logits": logits, "q_halt_logits": q_halt_logits, "q_continue_logits": q_continue_logits}
 
-        # NOTE: now, without gradients: update halted and the q_logits.
+        # NOTE: Halting decision logic - determines which sequences should stop working on their current problems
+        # This operates per-sequence: each position in the batch can independently decide to halt
         with torch.no_grad():
-            # Step
+            # Step counter: increment for all sequences (tracks batches spent on current problem)
             new_steps = new_steps + 1
             is_last_step = new_steps >= self.config.halt_max_steps
 
-            # at this point, halted is boolean.
+            # Default: force halt when max steps reached (prevents infinite computation)
             halted = is_last_step
 
-            # if training, and ACT is enabled
+            # Training mode: use Q-learning to decide halting + exploration
             if self.training and (self.config.halt_max_steps > 1):
-                # Halt signal
-                # NOTE: During evaluation, always use max steps, this is to guarantee the same halting steps inside a batch for batching purposes
-                # NOTE: - either halted before, or q_halt_logits > q_continue_logits triggers a halt.
+                # Q-learning halt signal: sequence halts if Q(halt) > Q(continue)
+                # NOTE: This learns to predict when the sequence has "solved" its current problem
                 halted = halted | (q_halt_logits > q_continue_logits)
 
-                # Exploration
-                ## NOTE: - override the halted tensor with a random tensor, that is less than the exploration probability.
+                # Exploration: randomly force some sequences to halt early or late
+                # NOTE: Prevents over-fitting to specific timing patterns during training
                 min_halt_steps = (
                     torch.rand_like(q_halt_logits) < self.config.halt_exploration_prob
                 ) * torch.randint_like(new_steps, low=2, high=self.config.halt_max_steps + 1)
 
-                ## NOTE: - this is the actual halting logic. If the sequence is halted before, or the q_halt_logits are greater than the q_continue_logits, and the sequence has not reached the max steps, then the sequence is halted.
+                # Final halting decision: combine Q-learning decision with exploration
+                # NOTE: Sequences halt when they want to AND they've spent minimum exploration time
                 halted = halted & (new_steps >= min_halt_steps)
-
-                ## NOTE: right, we do another forward pass to compute the new q_logits.
 
                 # Compute target Q
                 # NOTE: No replay buffer and target networks for computing target Q-value.
